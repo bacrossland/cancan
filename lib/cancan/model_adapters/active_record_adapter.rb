@@ -6,21 +6,22 @@ module CanCan
       end
 
       def self.override_condition_matching?(subject, name, value)
-        name.kind_of?(MetaWhere::Column) if defined? MetaWhere
+        name.kind_of?(Squeel::Nodes::Predicate) if defined? Squeel
       end
 
       def self.matches_condition?(subject, name, value)
-        subject_value = subject.send(name.column)
-        if name.method.to_s.ends_with? "_any"
-          value.any? { |v| meta_where_match? subject_value, name.method.to_s.sub("_any", ""), v }
-        elsif name.method.to_s.ends_with? "_all"
-          value.all? { |v| meta_where_match? subject_value, name.method.to_s.sub("_all", ""), v }
+        subject_value = subject.send(name.expr)
+        method_name = name.method_name.to_s
+        if method_name.ends_with? "_any"
+          value.any? { |v| squeel_match? subject_value, method_name.sub("_any", ""), v }
+        elsif method_name.ends_with? "_all"
+          value.all? { |v| squeel_match? subject_value, method_name.sub("_all", ""), v }
         else
-          meta_where_match? subject_value, name.method, value
+          squeel_match? subject_value, name.method_name, value
         end
       end
 
-      def self.meta_where_match?(subject_value, method, value)
+      def self.squeel_match?(subject_value, method, value)
         case method.to_sym
         when :eq      then subject_value == value
         when :not_eq  then subject_value != value
@@ -31,8 +32,8 @@ module CanCan
         when :gt      then subject_value > value
         when :gteq    then subject_value >= value
         when :matches then subject_value =~ Regexp.new("^" + Regexp.escape(value).gsub("%", ".*") + "$", true)
-        when :does_not_match then !meta_where_match?(subject_value, :matches, value)
-        else raise NotImplemented, "The #{method} MetaWhere condition is not supported."
+        when :does_not_match then !squeel_match?(subject_value, :matches, value)
+        else raise NotImplemented, "The #{method} Squeel condition is not supported."
         end
       end
 
@@ -54,11 +55,27 @@ module CanCan
       def conditions
         if @rules.size == 1 && @rules.first.base_behavior
           # Return the conditions directly if there's just one definition
-          tableized_conditions(@rules.first.conditions).dup
+          tableized_conditions(unsqueeled_conditions(@rules.first.conditions.dup))
         else
-          @rules.reverse.inject(false_sql) do |sql, rule|
-            merge_conditions(sql, tableized_conditions(rule.conditions).dup, rule.base_behavior)
+          @rules.reverse.inject(false_sql) do |accumulator, rule|
+            conditions = tableized_conditions(unsqueeled_conditions(rule.conditions.dup))
+            if conditions.blank?
+              rule.base_behavior ? (accumulator | true_sql) : (accumulator & false_sql)
+            else
+              rule.base_behavior ? (accumulator | conditions) : (accumulator & -conditions)
           end
+        end
+      end
+
+      def unsqueeled_conditions(conditions)
+        return conditions unless conditions.kind_of? Hash
+        conditions.inject({}) do |result_hash, (name, value)|
+          name = name._name if name.is_a? Squeel::Nodes::Join
+          if value.kind_of? Hash
+            value = unsqueeled_conditions(value)
+          end
+          result_hash[name] = value
+          result_hash
         end
       end
 
@@ -83,6 +100,18 @@ module CanCan
             result_hash[name] = value
           end
           result_hash
+        end
+      end
+
+        # override to fix overwrites
+        # do not write existing hashes using empty hashes
+      def merge_joins(base, add)
+        add.each do |name, nested|
+          if base[name].is_a?(Hash) && nested.present?
+            merge_joins(base[name], nested)
+          elsif !base[name].is_a?(Hash) || nested.present?
+            base[name] = nested
+          end
         end
       end
 

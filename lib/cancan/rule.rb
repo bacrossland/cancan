@@ -109,7 +109,13 @@ module CanCan
             if model_adapter(subject).override_condition_matching? subject, name, value
               model_adapter(subject).matches_condition? subject, name, value
             else
-              attribute = subject.send(name)
+              method_name = case name
+              when Symbol then name
+              when Squeel::Nodes::Join then name._name
+              when Squeel::Nodes::Predicate then name.expr
+              else raise name
+              end
+              attribute = subject.send(method_name)
               if value.kind_of?(Hash)
                 if attribute.kind_of? Array
                   attribute.any? { |element| matches_conditions_hash? element, value }
