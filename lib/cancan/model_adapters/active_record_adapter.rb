@@ -63,6 +63,7 @@ module CanCan
               rule.base_behavior ? (accumulator | true_sql) : (accumulator & false_sql)
             else
               rule.base_behavior ? (accumulator | conditions) : (accumulator & -conditions)
+            end
           end
         end
       end
@@ -100,18 +101,6 @@ module CanCan
             result_hash[name] = value
           end
           result_hash
-        end
-      end
-
-        # override to fix overwrites
-        # do not write existing hashes using empty hashes
-      def merge_joins(base, add)
-        add.each do |name, nested|
-          if base[name].is_a?(Hash) && nested.present?
-            merge_joins(base[name], nested)
-          elsif !base[name].is_a?(Hash) || nested.present?
-            base[name] = nested
-          end
         end
       end
 
@@ -188,6 +177,18 @@ module CanCan
           if base[name].is_a?(Hash)
             merge_joins(base[name], nested) unless nested.empty?
           else
+            base[name] = nested
+          end
+        end
+      end
+
+      # override to fix overwrites
+      # do not write existing hashes using empty hashes
+      def merge_joins(base, add)
+        add.each do |name, nested|
+          if base[name].is_a?(Hash) && nested.present?
+            merge_joins(base[name], nested)
+          elsif !base[name].is_a?(Hash) || nested.present?
             base[name] = nested
           end
         end
